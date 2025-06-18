@@ -8,27 +8,24 @@ namespace FinanceTracker.API.Models
     public class Transaction
     {
         [Key]
+        [DatabaseGenerated(DatabaseGeneratedOption.Identity)] // Auto-increment ID
         public int Id { get; set; }
 
-        [Required]
-        [StringLength(100)]
-        public string Description { get; set; } = null!;
+        
+        public string Description { get; set; }
 
-        [Required]
-        [Column(TypeName = "decimal(18,2)")]
+        
         public decimal Amount { get; set; }
 
-        [Required]
-        public DateTime Date { get; set; } = DateTime.UtcNow;
+        
+        public DateTime Date { get; set; }
 
-        [Required]
-        [StringLength(50)]
-        public string Category { get; set; } = null!;
+        public string Category { get; set; }
 
-        [Required]
-        public string UserId { get; set; } = null!;
+        
+        public string UserId { get; set; }
 
         [ForeignKey("UserId")]
-        public virtual ApplicationUser User { get; set; } = null!;
+        public virtual ApplicationUser? User { get; set; } // Optional navigation property
     }
 }
