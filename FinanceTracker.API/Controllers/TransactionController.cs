@@ -4,106 +4,365 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using FinanceTracker.API.Data;
 using FinanceTracker.API.Models;
+using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
 
-[Authorize]
-[Route("api/[controller]")]
-[ApiController]
-public class TransactionController : ControllerBase
+namespace FinanceTracker.API.Controllers
 {
-    private readonly ApplicationDbContext _context;
-    private readonly UserManager<ApplicationUser> _userManager;
-
-    public TransactionController(ApplicationDbContext context, UserManager<ApplicationUser> userManager)
+    [Authorize]
+    [Route("api/[controller]")]
+    [ApiController]
+    public class TransactionController : ControllerBase
     {
-        _context = context;
-        _userManager = userManager;
-    }
+        private readonly ApplicationDbContext _context;
+        private readonly UserManager<ApplicationUser> _userManager;
 
-    [HttpPost("add")]
-public async Task<IActionResult> AddTransaction([FromBody] Transaction transaction)
-{
-    if (!ModelState.IsValid)
-    {
-        Console.WriteLine("Model validation failed:");
-        foreach (var error in ModelState.Values.SelectMany(v => v.Errors))
+        public TransactionController(ApplicationDbContext context, UserManager<ApplicationUser> userManager)
         {
-            Console.WriteLine(error.ErrorMessage);
+            _context = context;
+            _userManager = userManager;
         }
-        return BadRequest(ModelState);
-    }
 
-    var user = await _userManager.GetUserAsync(User);
-    if (user == null)
-    {
-        Console.WriteLine("User is not authenticated");
-        return Unauthorized(new { Message = "User is not authenticated" });
-    }
+        [HttpPost("add")]
+        public async Task<IActionResult> AddTransaction([FromBody] TransactionCreateDto transactionDto)
+        {
+            try
+            {
+                // Validate the model
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(ModelState);
+                }
 
-    transaction.UserId = user.Id;
+                // Try multiple ways to get the user ID from claims
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                           ?? User.FindFirst("userId")?.Value
+                           ?? User.FindFirst("sub")?.Value
+                           ?? User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
 
-    _context.Transactions.Add(transaction);
-    await _context.SaveChangesAsync();
+                if (string.IsNullOrEmpty(userId))
+                {
+                    // Debug: Log all available claims
+                    Console.WriteLine("❌ No user ID found in claims. Available claims:");
+                    foreach (var claim in User.Claims)
+                    {
+                        Console.WriteLine($"  {claim.Type}: {claim.Value}");
+                    }
+                    return Unauthorized(new { message = "User ID not found in token claims" });
+                }
 
-    Console.WriteLine($"Transaction added successfully: {transaction.Description}, Amount: {transaction.Amount}");
+                // Try to get the user from the database
+                var user = await _userManager.FindByIdAsync(userId);
+                
+                if (user == null)
+                {
+                    return Unauthorized(new { message = $"User not found in database with ID: {userId}" });
+                }
 
-    return Ok(new { Message = "Transaction added successfully", TransactionId = transaction.Id });
-}
+                // Debug: Log user information
+                Console.WriteLine($"✅ User authenticated: {user.Email} (ID: {user.Id})");
 
-    [HttpGet("list")]
-    public async Task<IActionResult> ListTransactions()
-    {
-        var user = await _userManager.GetUserAsync(User);
+                // Create the transaction entity from the DTO
+                var transaction = new Transaction
+                {
+                    Description = transactionDto.Description,
+                    Amount = transactionDto.Amount,
+                    Date = transactionDto.Date,
+                    Category = transactionDto.Category,
+                    UserId = user.Id // Set from authenticated user
+                };
 
-        if (user == null)
-            return Unauthorized(new { Message = "User is not authenticated" });
+                Console.WriteLine($"💾 Saving transaction: {transaction.Description} for user {user.Email}");
 
-        var transactions = await _context.Transactions
-            .Where(t => t.UserId == user.Id)
-            .OrderByDescending(t => t.Date)
-            .ToListAsync();
+                _context.Transactions.Add(transaction);
+                await _context.SaveChangesAsync();
 
-        return Ok(transactions);
-    }
+                Console.WriteLine($"✅ Transaction saved with ID: {transaction.Id}");
 
-    [HttpPut("update/{id}")]
-    public async Task<IActionResult> UpdateTransaction(int id, [FromBody] Transaction transaction)
-    {
-        var user = await _userManager.GetUserAsync(User);
+                return Ok(new { 
+                    Message = "Transaction added successfully", 
+                    TransactionId = transaction.Id,
+                    UserId = user.Id,
+                    UserEmail = user.Email,
+                    Amount = transaction.Amount,
+                    Description = transaction.Description
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error adding transaction: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                return BadRequest(new { message = $"Error: {ex.Message}" });
+            }
+        }
 
-        if (user == null)
-            return Unauthorized(new { Message = "User is not authenticated" });
+        [HttpGet]
+        public async Task<IActionResult> GetTransactions()
+        {
+            try
+            {
+                // Try multiple ways to get the user ID from claims
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                           ?? User.FindFirst("userId")?.Value
+                           ?? User.FindFirst("sub")?.Value
+                           ?? User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
 
-        var existingTransaction = await _context.Transactions
-            .FirstOrDefaultAsync(t => t.Id == id && t.UserId == user.Id);
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized(new { message = "User ID not found in token claims" });
+                }
 
-        if (existingTransaction == null)
-            return NotFound(new { Message = "Transaction not found" });
+                var user = await _userManager.FindByIdAsync(userId);
+                
+                if (user == null)
+                {
+                    return Unauthorized(new { message = $"User not found in database with ID: {userId}" });
+                }
 
-        existingTransaction.Description = transaction.Description;
-        existingTransaction.Amount = transaction.Amount;
-        existingTransaction.Date = transaction.Date;
-        existingTransaction.Category = transaction.Category;
+                // Get transactions WITHOUT the User navigation property to avoid cycles
+                var transactions = await _context.Transactions
+                    .Where(t => t.UserId == user.Id)
+                    .Select(t => new
+                    {
+                        t.Id,
+                        t.Description,
+                        t.Amount,
+                        t.Date,
+                        t.Category,
+                        t.UserId
+                        // Explicitly exclude User navigation property
+                    })
+                    .OrderByDescending(t => t.Date)
+                    .ToListAsync();
 
-        await _context.SaveChangesAsync();
-        return Ok(new { Message = "Transaction updated successfully" });
-    }
+                return Ok(new
+                {
+                    message = "Transactions retrieved successfully",
+                    userId = user.Id,
+                    userEmail = user.Email,
+                    transactionCount = transactions.Count,
+                    transactions = transactions
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error getting transactions: {ex.Message}");
+                return BadRequest(new { message = $"Error: {ex.Message}" });
+            }
+        }
 
-    [HttpDelete("delete/{id}")]
-    public async Task<IActionResult> DeleteTransaction(int id)
-    {
-        var user = await _userManager.GetUserAsync(User);
+        [HttpGet("list")]
+        public async Task<IActionResult> ListTransactions()
+        {
+            try
+            {
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                           ?? User.FindFirst("userId")?.Value
+                           ?? User.FindFirst("sub")?.Value
+                           ?? User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
 
-        if (user == null)
-            return Unauthorized(new { Message = "User is not authenticated" });
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized(new { message = "User ID not found in token claims" });
+                }
 
-        var transaction = await _context.Transactions
-            .FirstOrDefaultAsync(t => t.Id == id && t.UserId == user.Id);
+                var user = await _userManager.FindByIdAsync(userId);
+                
+                if (user == null)
+                {
+                    return Unauthorized(new { message = $"User not found in database with ID: {userId}" });
+                }
 
-        if (transaction == null)
-            return NotFound(new { Message = "Transaction not found" });
+                // Get transactions WITHOUT the User navigation property to avoid cycles
+                var transactions = await _context.Transactions
+                    .Where(t => t.UserId == user.Id)
+                    .Select(t => new
+                    {
+                        t.Id,
+                        t.Description,
+                        t.Amount,
+                        t.Date,
+                        t.Category,
+                        t.UserId
+                    })
+                    .OrderByDescending(t => t.Date)
+                    .ToListAsync();
 
-        _context.Transactions.Remove(transaction);
-        await _context.SaveChangesAsync();
-        return Ok(new { Message = "Transaction deleted successfully" });
+                return Ok(transactions);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error getting transactions: {ex.Message}");
+                return BadRequest(new { message = $"Error: {ex.Message}" });
+            }
+        }
+
+        [HttpPut("update/{id}")]
+        public async Task<IActionResult> UpdateTransaction(int id, [FromBody] TransactionCreateDto transactionDto)
+        {
+            try
+            {
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(ModelState);
+                }
+
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                           ?? User.FindFirst("userId")?.Value
+                           ?? User.FindFirst("sub")?.Value
+                           ?? User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized(new { message = "User ID not found in token claims" });
+                }
+
+                var user = await _userManager.FindByIdAsync(userId);
+                
+                if (user == null)
+                {
+                    return Unauthorized(new { message = $"User not found in database with ID: {userId}" });
+                }
+
+                var existingTransaction = await _context.Transactions
+                    .FirstOrDefaultAsync(t => t.Id == id && t.UserId == user.Id);
+
+                if (existingTransaction == null)
+                    return NotFound(new { Message = "Transaction not found" });
+
+                existingTransaction.Description = transactionDto.Description;
+                existingTransaction.Amount = transactionDto.Amount;
+                existingTransaction.Date = transactionDto.Date;
+                existingTransaction.Category = transactionDto.Category;
+
+                await _context.SaveChangesAsync();
+                return Ok(new { Message = "Transaction updated successfully" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error updating transaction: {ex.Message}");
+                return BadRequest(new { message = $"Error: {ex.Message}" });
+            }
+        }
+
+        [HttpDelete("delete/{id}")]
+        public async Task<IActionResult> DeleteTransaction(int id)
+        {
+            try
+            {
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                           ?? User.FindFirst("userId")?.Value
+                           ?? User.FindFirst("sub")?.Value
+                           ?? User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized(new { message = "User ID not found in token claims" });
+                }
+
+                var user = await _userManager.FindByIdAsync(userId);
+                
+                if (user == null)
+                {
+                    return Unauthorized(new { message = $"User not found in database with ID: {userId}" });
+                }
+
+                var transaction = await _context.Transactions
+                    .FirstOrDefaultAsync(t => t.Id == id && t.UserId == user.Id);
+
+                if (transaction == null)
+                    return NotFound(new { Message = "Transaction not found" });
+
+                _context.Transactions.Remove(transaction);
+                await _context.SaveChangesAsync();
+                return Ok(new { Message = "Transaction deleted successfully" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error deleting transaction: {ex.Message}");
+                return BadRequest(new { message = $"Error: {ex.Message}" });
+            }
+        }
+
+        [HttpGet("statistics")]
+        public async Task<IActionResult> GetStatistics()
+        {
+            try
+            {
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                           ?? User.FindFirst("userId")?.Value
+                           ?? User.FindFirst("sub")?.Value
+                           ?? User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized(new { message = "User ID not found in token claims" });
+                }
+
+                var user = await _userManager.FindByIdAsync(userId);
+                
+                if (user == null)
+                {
+                    return Unauthorized(new { message = $"User not found in database with ID: {userId}" });
+                }
+
+                var transactions = await _context.Transactions
+                    .Where(t => t.UserId == user.Id)
+                    .ToListAsync();
+
+                var totalIncome = transactions.Where(t => t.Amount > 0).Sum(t => t.Amount);
+                var totalExpenses = transactions.Where(t => t.Amount < 0).Sum(t => t.Amount);
+
+                return Ok(new
+                {
+                    TotalIncome = totalIncome,
+                    TotalExpenses = totalExpenses,
+                    NetBalance = totalIncome + totalExpenses
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error getting statistics: {ex.Message}");
+                return BadRequest(new { message = $"Error: {ex.Message}" });
+            }
+        }
+
+        [HttpGet("test-auth")]
+        public async Task<IActionResult> TestAuth()
+        {
+            try
+            {
+                // Try multiple ways to get the user ID from claims
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                           ?? User.FindFirst("userId")?.Value
+                           ?? User.FindFirst("sub")?.Value
+                           ?? User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+
+                ApplicationUser? user = null;
+                if (!string.IsNullOrEmpty(userId))
+                {
+                    user = await _userManager.FindByIdAsync(userId);
+                }
+
+                var authHeader = Request.Headers["Authorization"].FirstOrDefault();
+                
+                return Ok(new
+                {
+                    message = "Authentication test successful",
+                    isAuthenticated = User.Identity?.IsAuthenticated ?? false,
+                    userId = user?.Id ?? "Not found",
+                    userEmail = user?.Email ?? "Not found",
+                    userName = user?.UserName ?? "Not found",
+                    userIdFromClaims = userId ?? "Not found",
+                    authHeaderPresent = !string.IsNullOrEmpty(authHeader),
+                    claimsCount = User.Claims.Count(),
+                    claims = User.Claims.Select(c => new { c.Type, c.Value }).ToList()
+                });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = $"Error: {ex.Message}" });
+            }
+        }
     }
 }

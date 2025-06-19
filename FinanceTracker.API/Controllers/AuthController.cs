@@ -57,16 +57,27 @@ namespace FinanceTracker.API.Controllers
             if (user == null || !await _userManager.CheckPasswordAsync(user, model.Password))
                 return Unauthorized(new { Message = "Invalid credentials" });
 
-            // Create claims for the JWT token
+            // Create claims for the JWT token with CORRECT claim types
             var authClaims = new List<Claim>
             {
-                new Claim(ClaimTypes.Name, user.UserName),
-                new Claim(ClaimTypes.Email, user.Email),
-                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()) // Unique identifier for the token
+                // Add the user ID as NameIdentifier claim (this is what UserManager.GetUserAsync looks for)
+                new Claim(ClaimTypes.NameIdentifier, user.Id),
+                new Claim(ClaimTypes.Name, user.UserName ?? ""),
+                new Claim(ClaimTypes.Email, user.Email ?? ""),
+                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+                new Claim(JwtRegisteredClaimNames.Sub, user.Id), // Subject claim
+                new Claim("userId", user.Id) // Custom claim for easier access
             };
 
+            // Debug: Log the claims being added
+            Console.WriteLine("=== Creating JWT with claims ===");
+            foreach (var claim in authClaims)
+            {
+                Console.WriteLine($"{claim.Type}: {claim.Value}");
+            }
+
             // Generate the signing key
-            var authSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]));
+            var authSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]!));
 
             // Create the JWT token
             var token = new JwtSecurityToken(
@@ -77,11 +88,37 @@ namespace FinanceTracker.API.Controllers
                 signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
             );
 
+            var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
+
+            // Debug: Log token creation
+            Console.WriteLine($"✅ JWT Token created for user: {user.Email} (ID: {user.Id})");
+            Console.WriteLine($"Token preview: {tokenString.Substring(0, Math.Min(50, tokenString.Length))}...");
+
             // Return the token and expiration time
             return Ok(new
             {
-                Token = new JwtSecurityTokenHandler().WriteToken(token),
-                Expiration = token.ValidTo
+                Token = tokenString,
+                Expiration = token.ValidTo,
+                UserId = user.Id,
+                UserEmail = user.Email,
+                UserName = user.UserName
+            });
+        }
+
+        // Add a test endpoint to verify token creation
+        [HttpPost("test-token")]
+        public async Task<IActionResult> TestToken([FromBody] LoginModel model)
+        {
+            var user = await _userManager.FindByEmailAsync(model.Email);
+            if (user == null)
+                return NotFound(new { Message = "User not found" });
+
+            return Ok(new
+            {
+                UserId = user.Id,
+                UserEmail = user.Email,
+                UserName = user.UserName,
+                Message = "User found successfully"
             });
         }
     }

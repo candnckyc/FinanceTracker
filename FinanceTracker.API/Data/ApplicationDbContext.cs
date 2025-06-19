@@ -5,7 +5,15 @@ using FinanceTracker.API.Models;
 
 namespace FinanceTracker.API.Data
 {
-    public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
+    public class ApplicationDbContext : IdentityDbContext<
+        ApplicationUser, 
+        IdentityRole, 
+        string,
+        IdentityUserClaim<string>,
+        IdentityUserRole<string>,
+        IdentityUserLogin<string>,
+        IdentityRoleClaim<string>,
+        IdentityUserToken<string>>
     {
         public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) 
             : base(options)
@@ -27,64 +35,77 @@ namespace FinanceTracker.API.Data
         }
 
         protected override void OnModelCreating(ModelBuilder builder)
-{
-    base.OnModelCreating(builder);
+        {
+            base.OnModelCreating(builder);
 
-    // Configure Identity tables
-    builder.Entity<ApplicationUser>(entity =>
-    {
-        entity.ToTable("AspNetUsers");
-        entity.Property(e => e.Id).HasMaxLength(450);
-    });
+            // Configure Identity tables
+            builder.Entity<ApplicationUser>(entity =>
+            {
+                entity.ToTable("AspNetUsers");
+                entity.Property(e => e.Id).HasMaxLength(450);
+                
+                // Configure the relationship with explicit foreign key
+                entity.HasMany(e => e.Transactions)
+                    .WithOne(e => e.User)
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
 
-    builder.Entity<IdentityRole>(entity =>
-    {
-        entity.ToTable("AspNetRoles");
-        entity.Property(e => e.Id).HasMaxLength(450);
-    });
+            builder.Entity<IdentityRole>(entity =>
+            {
+                entity.ToTable("AspNetRoles");
+                entity.Property(e => e.Id).HasMaxLength(450);
+            });
 
-    builder.Entity<IdentityUserRole<string>>(entity =>
-    {
-        entity.ToTable("AspNetUserRoles");
-        entity.Property(e => e.UserId).HasMaxLength(450);
-        entity.Property(e => e.RoleId).HasMaxLength(450);
-    });
+            builder.Entity<IdentityUserRole<string>>(entity =>
+            {
+                entity.ToTable("AspNetUserRoles");
+                entity.Property(e => e.UserId).HasMaxLength(450);
+                entity.Property(e => e.RoleId).HasMaxLength(450);
+            });
 
-    builder.Entity<IdentityUserClaim<string>>(entity =>
-    {
-        entity.ToTable("AspNetUserClaims");
-        entity.Property(e => e.UserId).HasMaxLength(450);
-    });
+            builder.Entity<IdentityUserClaim<string>>(entity =>
+            {
+                entity.ToTable("AspNetUserClaims");
+                entity.Property(e => e.UserId).HasMaxLength(450);
+            });
 
-    builder.Entity<IdentityUserLogin<string>>(entity =>
-    {
-        entity.ToTable("AspNetUserLogins");
-        entity.Property(e => e.UserId).HasMaxLength(450);
-    });
+            builder.Entity<IdentityUserLogin<string>>(entity =>
+            {
+                entity.ToTable("AspNetUserLogins");
+                entity.Property(e => e.UserId).HasMaxLength(450);
+            });
 
-    builder.Entity<IdentityRoleClaim<string>>(entity =>
-    {
-        entity.ToTable("AspNetRoleClaims");
-        entity.Property(e => e.RoleId).HasMaxLength(450);
-    });
+            builder.Entity<IdentityRoleClaim<string>>(entity =>
+            {
+                entity.ToTable("AspNetRoleClaims");
+                entity.Property(e => e.RoleId).HasMaxLength(450);
+            });
 
-    builder.Entity<IdentityUserToken<string>>(entity =>
-    {
-        entity.ToTable("AspNetUserTokens");
-        entity.Property(e => e.UserId).HasMaxLength(450);
-    });
+            builder.Entity<IdentityUserToken<string>>(entity =>
+            {
+                entity.ToTable("AspNetUserTokens");
+                entity.Property(e => e.UserId).HasMaxLength(450);
+            });
 
-    // Configure Transaction table
-    builder.Entity<Transaction>(entity =>
-    {
-        entity.ToTable("Transactions");
-        entity.HasKey(e => e.Id);
-        entity.Property(e => e.Description).IsRequired().HasMaxLength(100);
-        entity.Property(e => e.Amount).HasColumnType("decimal(18,2)");
-        entity.Property(e => e.Date).IsRequired();
-        entity.Property(e => e.Category).HasMaxLength(50);
-        entity.Property(e => e.UserId).IsRequired().HasMaxLength(450);
-    });
-}
+            // Configure Transaction with explicit configuration
+            builder.Entity<Transaction>(entity =>
+            {
+                entity.ToTable("Transactions");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Description).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.Amount).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.Date).IsRequired();
+                entity.Property(e => e.Category).HasMaxLength(50);
+                entity.Property(e => e.UserId).IsRequired().HasMaxLength(450);
+
+                // Explicitly configure the relationship
+                entity.HasOne(t => t.User)
+                    .WithMany(u => u.Transactions)
+                    .HasForeignKey(t => t.UserId)
+                    .HasConstraintName("FK_Transactions_AspNetUsers_UserId")
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+        }
     }
 }
