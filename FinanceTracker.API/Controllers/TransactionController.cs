@@ -5,100 +5,105 @@ using Microsoft.EntityFrameworkCore;
 using FinanceTracker.API.Data;
 using FinanceTracker.API.Models;
 
-namespace FinanceTracker.API.Controllers
+[Authorize]
+[Route("api/[controller]")]
+[ApiController]
+public class TransactionController : ControllerBase
 {
-    [Authorize]
-    [Route("api/[controller]/[Action]")]
-    [ApiController]
-    public class TransactionController : ControllerBase
+    private readonly ApplicationDbContext _context;
+    private readonly UserManager<ApplicationUser> _userManager;
+
+    public TransactionController(ApplicationDbContext context, UserManager<ApplicationUser> userManager)
     {
-        private readonly ApplicationDbContext _context;
-        private readonly UserManager<ApplicationUser> _userManager;
+        _context = context;
+        _userManager = userManager;
+    }
 
-        public TransactionController(ApplicationDbContext context, UserManager<ApplicationUser> userManager)
+    [HttpPost("add")]
+public async Task<IActionResult> AddTransaction([FromBody] Transaction transaction)
+{
+    if (!ModelState.IsValid)
+    {
+        Console.WriteLine("Model validation failed:");
+        foreach (var error in ModelState.Values.SelectMany(v => v.Errors))
         {
-            _context = context;
-            _userManager = userManager;
+            Console.WriteLine(error.ErrorMessage);
         }
+        return BadRequest(ModelState);
+    }
 
-        [HttpPost("add")]
-        public async Task<IActionResult> AddTransaction([FromBody] Transaction transaction)
-        {
-            var user = await _userManager.GetUserAsync(User);
+    var user = await _userManager.GetUserAsync(User);
+    if (user == null)
+    {
+        Console.WriteLine("User is not authenticated");
+        return Unauthorized(new { Message = "User is not authenticated" });
+    }
 
-            // Automatically set the UserId and generate a GUID for Id
-            transaction.UserId = user.Id;
-             
+    transaction.UserId = user.Id;
 
-            _context.Transactions.Add(transaction);
-            await _context.SaveChangesAsync();
+    _context.Transactions.Add(transaction);
+    await _context.SaveChangesAsync();
 
-            return Ok(new { Message = "Transaction added successfully", TransactionId = transaction.Id });
-        }
+    Console.WriteLine($"Transaction added successfully: {transaction.Description}, Amount: {transaction.Amount}");
 
-        [HttpGet("list")]
-        public async Task<IActionResult> ListTransactions()
-        {
-            var user = await _userManager.GetUserAsync(User);
-            var transactions = await _context.Transactions
-                .Where(t => t.UserId == user.Id)
-                .OrderByDescending(t => t.Date)
-                .ToListAsync();
+    return Ok(new { Message = "Transaction added successfully", TransactionId = transaction.Id });
+}
 
-            return Ok(transactions);
-        }
+    [HttpGet("list")]
+    public async Task<IActionResult> ListTransactions()
+    {
+        var user = await _userManager.GetUserAsync(User);
 
-        [HttpPut("update/{id}")]
-        public async Task<IActionResult> UpdateTransaction(int id, [FromBody] Transaction transaction)
-        {
-            var user = await _userManager.GetUserAsync(User);
-            var existingTransaction = await _context.Transactions
-                .FirstOrDefaultAsync(t => t.Id == id && t.UserId == user.Id);
+        if (user == null)
+            return Unauthorized(new { Message = "User is not authenticated" });
 
-            if (existingTransaction == null)
-                return NotFound(new { Message = "Transaction not found" });
+        var transactions = await _context.Transactions
+            .Where(t => t.UserId == user.Id)
+            .OrderByDescending(t => t.Date)
+            .ToListAsync();
 
-            existingTransaction.Description = transaction.Description;
-            existingTransaction.Amount = transaction.Amount;
-            existingTransaction.Date = transaction.Date;
-            existingTransaction.Category = transaction.Category;
+        return Ok(transactions);
+    }
 
-            await _context.SaveChangesAsync();
-            return Ok(new { Message = "Transaction updated successfully" });
-        }
+    [HttpPut("update/{id}")]
+    public async Task<IActionResult> UpdateTransaction(int id, [FromBody] Transaction transaction)
+    {
+        var user = await _userManager.GetUserAsync(User);
 
-        [HttpDelete("delete/{id}")]
-        public async Task<IActionResult> DeleteTransaction(int id)
-        {
-            var user = await _userManager.GetUserAsync(User);
-            var transaction = await _context.Transactions
-                .FirstOrDefaultAsync(t => t.Id == id && t.UserId == user.Id);
+        if (user == null)
+            return Unauthorized(new { Message = "User is not authenticated" });
 
-            if (transaction == null)
-                return NotFound(new { Message = "Transaction not found" });
+        var existingTransaction = await _context.Transactions
+            .FirstOrDefaultAsync(t => t.Id == id && t.UserId == user.Id);
 
-            _context.Transactions.Remove(transaction);
-            await _context.SaveChangesAsync();
-            return Ok(new { Message = "Transaction deleted successfully" });
-        }
+        if (existingTransaction == null)
+            return NotFound(new { Message = "Transaction not found" });
 
-        [HttpGet("statistics")]
-        public async Task<IActionResult> GetStatistics()
-        {
-            var user = await _userManager.GetUserAsync(User);
-            var transactions = await _context.Transactions
-                .Where(t => t.UserId == user.Id)
-                .ToListAsync();
+        existingTransaction.Description = transaction.Description;
+        existingTransaction.Amount = transaction.Amount;
+        existingTransaction.Date = transaction.Date;
+        existingTransaction.Category = transaction.Category;
 
-            var totalIncome = transactions.Where(t => t.Amount > 0).Sum(t => t.Amount);
-            var totalExpenses = transactions.Where(t => t.Amount < 0).Sum(t => t.Amount);
+        await _context.SaveChangesAsync();
+        return Ok(new { Message = "Transaction updated successfully" });
+    }
 
-            return Ok(new
-            {
-                TotalIncome = totalIncome,
-                TotalExpenses = totalExpenses,
-                NetBalance = totalIncome + totalExpenses
-            });
-        }
+    [HttpDelete("delete/{id}")]
+    public async Task<IActionResult> DeleteTransaction(int id)
+    {
+        var user = await _userManager.GetUserAsync(User);
+
+        if (user == null)
+            return Unauthorized(new { Message = "User is not authenticated" });
+
+        var transaction = await _context.Transactions
+            .FirstOrDefaultAsync(t => t.Id == id && t.UserId == user.Id);
+
+        if (transaction == null)
+            return NotFound(new { Message = "Transaction not found" });
+
+        _context.Transactions.Remove(transaction);
+        await _context.SaveChangesAsync();
+        return Ok(new { Message = "Transaction deleted successfully" });
     }
 }
