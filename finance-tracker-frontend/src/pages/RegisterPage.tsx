@@ -24,12 +24,32 @@ import {
   Person,
   Visibility,
   VisibilityOff,
-  PersonAdd
+  PersonAdd,
+  AccountCircle,
+  CheckCircle,
+  Cancel
 } from '@mui/icons-material';
 
 import { useAuth } from '../contexts/AuthContext';
-import { RegisterRequest } from '../types';
 import logger from '../utils/logger';
+
+// Types
+export interface RegisterFormData {
+  username: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+}
+
+export interface RegisterRequest {
+  username: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  password: string;
+}
 
 // Password strength checker
 const checkPasswordStrength = (password: string): { score: number; text: string; color: string } => {
@@ -42,18 +62,34 @@ const checkPasswordStrength = (password: string): { score: number; text: string;
   if (/[^A-Za-z0-9]/.test(password)) score++;
 
   const strength = [
-    { text: 'Çok Zayıf', color: 'error.main' },
-    { text: 'Zayıf', color: 'error.main' },
-    { text: 'Orta', color: 'warning.main' },
-    { text: 'İyi', color: 'info.main' },
-    { text: 'Güçlü', color: 'success.main' }
+    { text: 'Çok Zayıf', color: '#f44336' },
+    { text: 'Zayıf', color: '#ff9800' },
+    { text: 'Orta', color: '#ff9800' },
+    { text: 'İyi', color: '#2196f3' },
+    { text: 'Güçlü', color: '#4caf50' }
   ];
 
   return { score, ...strength[score] };
 };
 
+// Username availability checker (mock)
+const checkUsernameAvailability = async (username: string): Promise<boolean> => {
+  // Simulate API call delay
+  await new Promise(resolve => setTimeout(resolve, 500));
+  
+  // Mock some taken usernames
+  const takenUsernames = ['admin', 'test', 'user', 'demo'];
+  return !takenUsernames.includes(username.toLowerCase());
+};
+
 // Validation schema
 const registerSchema = yup.object({
+  username: yup
+    .string()
+    .min(3, 'Kullanıcı adı en az 3 karakter olmalıdır')
+    .max(30, 'Kullanıcı adı en fazla 30 karakter olmalıdır')
+    .matches(/^[a-zA-Z0-9_]+$/, 'Kullanıcı adı sadece harf, rakam ve _ içerebilir')
+    .required('Kullanıcı adı zorunludur'),
   firstName: yup
     .string()
     .min(2, 'Ad en az 2 karakter olmalıdır')
@@ -79,8 +115,6 @@ const registerSchema = yup.object({
     .required('Şifre tekrarı zorunludur')
 });
 
-type RegisterFormData = yup.InferType<typeof registerSchema>;
-
 const RegisterPage: React.FC = () => {
   // Component lifecycle
   useEffect(() => {
@@ -101,17 +135,20 @@ const RegisterPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
+  const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
 
   // Form handling
   const {
     control,
     handleSubmit,
     formState: { errors, isValid },
-    watch
+    watch,
+    trigger
   } = useForm<RegisterFormData>({
     resolver: yupResolver(registerSchema),
     mode: 'onChange',
     defaultValues: {
+      username: '',
       firstName: '',
       lastName: '',
       email: '',
@@ -121,7 +158,28 @@ const RegisterPage: React.FC = () => {
   });
 
   const watchedPassword = watch('password');
+  const watchedUsername = watch('username');
   const passwordStrength = watchedPassword ? checkPasswordStrength(watchedPassword) : null;
+
+  // Username availability check
+  useEffect(() => {
+    const checkUsername = async () => {
+      if (watchedUsername && watchedUsername.length >= 3 && !errors.username) {
+        setUsernameStatus('checking');
+        try {
+          const isAvailable = await checkUsernameAvailability(watchedUsername);
+          setUsernameStatus(isAvailable ? 'available' : 'taken');
+        } catch (error) {
+          setUsernameStatus('idle');
+        }
+      } else {
+        setUsernameStatus('idle');
+      }
+    };
+
+    const timeoutId = setTimeout(checkUsername, 1000);
+    return () => clearTimeout(timeoutId);
+  }, [watchedUsername, errors.username]);
 
   // Redirect if already logged in
   useEffect(() => {
@@ -146,17 +204,37 @@ const RegisterPage: React.FC = () => {
       logger.userAction('submit_register_form', 'RegisterPage', { 
         email: data.email, 
         firstName: data.firstName,
-        lastName: data.lastName 
+        username: data.username 
       });
-      
-      // Remove confirmPassword from request
-      const { confirmPassword, ...registerData } = data;
       
       logger.info('Registration form submitted', { 
         email: data.email, 
         firstName: data.firstName,
+        username: data.username,
         passwordStrength: passwordStrength?.score 
       }, 'RegisterPage', 'FORM_SUBMIT');
+
+      // Check username availability one more time before submitting
+      if (usernameStatus === 'taken') {
+        throw new Error('Bu kullanıcı adı zaten alınmış');
+      }
+
+      // Create API data
+      const registerData: RegisterRequest = {
+        username: data.username,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        email: data.email,
+        password: data.password
+      };
+
+      logger.debug('Registration data being sent', {
+        username: registerData.username,
+        firstName: registerData.firstName,
+        lastName: registerData.lastName,
+        email: registerData.email,
+        passwordLength: registerData.password?.length
+      }, 'AUTH', 'REGISTER_DATA');
 
       await registerUser(registerData);
       
@@ -169,14 +247,16 @@ const RegisterPage: React.FC = () => {
       logger.performanceEnd(perfId, 'register_form_submit');
       
       const errorMessage = error.response?.data?.message || 
-                          error.response?.data?.errors?.[0] || 
+                          error.response?.data?.title ||
                           error.message || 
                           'Kayıt olurken bir hata oluştu';
       
       logger.error('Registration failed', {
         error: errorMessage,
         status: error.response?.status,
-        email: data.email
+        email: data.email,
+        username: data.username,
+        validationErrors: error.response?.data?.errors
       }, 'RegisterPage', 'REGISTER_ERROR');
       
       setError(errorMessage);
@@ -205,6 +285,37 @@ const RegisterPage: React.FC = () => {
   const handleDismissError = (): void => {
     logger.userAction('dismiss_error', 'RegisterPage');
     setError(null);
+  };
+
+  // Username status icon
+  const getUsernameStatusIcon = () => {
+    switch (usernameStatus) {
+      case 'checking':
+        return <CircularProgress size={20} />;
+      case 'available':
+        return <CheckCircle sx={{ color: '#4caf50' }} />;
+      case 'taken':
+        return <Cancel sx={{ color: '#f44336' }} />;
+      default:
+        return null;
+    }
+  };
+
+  // Username helper text
+  const getUsernameHelperText = () => {
+    if (errors.username) {
+      return errors.username.message;
+    }
+    switch (usernameStatus) {
+      case 'checking':
+        return 'Kullanıcı adı kontrol ediliyor...';
+      case 'available':
+        return 'Bu kullanıcı adı kullanılabilir';
+      case 'taken':
+        return 'Bu kullanıcı adı zaten alınmış';
+      default:
+        return 'En az 3 karakter, sadece harf, rakam ve _ kullanın';
+    }
   };
 
   return (
@@ -253,23 +364,28 @@ const RegisterPage: React.FC = () => {
             onSubmit={handleSubmit(onSubmit)} 
             sx={{ width: '100%' }}
           >
-            {/* First Name */}
+            {/* Username */}
             <Controller
-              name="firstName"
+              name="username"
               control={control}
               render={({ field }) => (
                 <TextField
                   {...field}
                   fullWidth
-                  label="Ad"
+                  label="Kullanıcı Adı"
                   margin="normal"
-                  error={!!errors.firstName}
-                  helperText={errors.firstName?.message}
+                  error={!!errors.username || usernameStatus === 'taken'}
+                  helperText={getUsernameHelperText()}
                   disabled={isLoading}
                   InputProps={{
                     startAdornment: (
                       <InputAdornment position="start">
-                        <Person color={errors.firstName ? 'error' : 'action'} />
+                        <AccountCircle color={errors.username || usernameStatus === 'taken' ? 'error' : 'action'} />
+                      </InputAdornment>
+                    ),
+                    endAdornment: watchedUsername && watchedUsername.length >= 3 && (
+                      <InputAdornment position="end">
+                        {getUsernameStatusIcon()}
                       </InputAdornment>
                     ),
                   }}
@@ -277,29 +393,53 @@ const RegisterPage: React.FC = () => {
               )}
             />
 
-            {/* Last Name */}
-            <Controller
-              name="lastName"
-              control={control}
-              render={({ field }) => (
-                <TextField
-                  {...field}
-                  fullWidth
-                  label="Soyad"
-                  margin="normal"
-                  error={!!errors.lastName}
-                  helperText={errors.lastName?.message}
-                  disabled={isLoading}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Person color={errors.lastName ? 'error' : 'action'} />
-                      </InputAdornment>
-                    ),
-                  }}
-                />
-              )}
-            />
+            {/* Name Fields */}
+            <Box sx={{ display: 'flex', gap: 2 }}>
+              <Controller
+                name="firstName"
+                control={control}
+                render={({ field }) => (
+                  <TextField
+                    {...field}
+                    fullWidth
+                    label="Ad"
+                    margin="normal"
+                    error={!!errors.firstName}
+                    helperText={errors.firstName?.message}
+                    disabled={isLoading}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <Person color={errors.firstName ? 'error' : 'action'} />
+                        </InputAdornment>
+                      ),
+                    }}
+                  />
+                )}
+              />
+              <Controller
+                name="lastName"
+                control={control}
+                render={({ field }) => (
+                  <TextField
+                    {...field}
+                    fullWidth
+                    label="Soyad"
+                    margin="normal"
+                    error={!!errors.lastName}
+                    helperText={errors.lastName?.message}
+                    disabled={isLoading}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <Person color={errors.lastName ? 'error' : 'action'} />
+                        </InputAdornment>
+                      ),
+                    }}
+                  />
+                )}
+              />
+            </Box>
 
             {/* Email */}
             <Controller
@@ -432,7 +572,7 @@ const RegisterPage: React.FC = () => {
               fullWidth
               variant="contained"
               sx={{ mt: 3, mb: 2, py: 1.5 }}
-              disabled={isLoading || !isValid}
+              disabled={isLoading || !isValid || usernameStatus === 'taken' || usernameStatus === 'checking'}
             >
               {isLoading ? (
                 <>
@@ -453,7 +593,7 @@ const RegisterPage: React.FC = () => {
               onClick={handleNavigateToLogin}
               disabled={isLoading}
             >
-              Giriş Yap
+              Zaten hesabın var mı? Giriş Yap
             </Button>
           </Box>
         </Paper>

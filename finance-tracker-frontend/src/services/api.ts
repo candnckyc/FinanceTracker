@@ -78,10 +78,27 @@ class ApiService {
     const perfId = logger.performanceStart('login');
     try {
       logger.info('Attempting login', { email: data.email }, 'AUTH', 'LOGIN_ATTEMPT');
-      const response = await this.api.post<AuthResponse>('/auth/login', data);
+      const response: AxiosResponse<any> = await this.api.post('/auth/login', data);
+      
+      console.log('Raw backend response:', response.data); // Debug log
+      
+      // Map backend response to frontend format
+      const mappedResponse: AuthResponse = {
+        token: response.data.token,
+        user: {
+          id: response.data.userId,
+          email: response.data.userEmail,
+          username: response.data.userName,
+          firstName: response.data.firstName || '',
+          lastName: response.data.lastName || ''
+        }
+      };
+      
+      console.log('Mapped response:', mappedResponse); // Debug log
+      
       logger.performanceEnd(perfId, 'login');
-      logger.authSuccess('login', response.data.user);
-      return response.data;
+      logger.authSuccess('login', mappedResponse.user);
+      return mappedResponse;
     } catch (error: any) {
       logger.performanceEnd(perfId, 'login');
       logger.authError('login', error);
@@ -93,12 +110,55 @@ class ApiService {
     const perfId = logger.performanceStart('register');
     try {
       logger.info('Attempting registration', { email: data.email, firstName: data.firstName }, 'AUTH', 'REGISTER_ATTEMPT');
-      const response = await this.api.post<AuthResponse>('/auth/register', data);
+      
+      // Log the exact data being sent
+      logger.debug('Registration data being sent', {
+        username: data.username,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        email: data.email,
+        passwordLength: data.password?.length
+      }, 'AUTH', 'REGISTER_DATA');
+      
+      const response: AxiosResponse<any> = await this.api.post('/auth/register', data);
+      
+      console.log('Raw registration response:', response.data); // Debug log
+      
+      // Map backend response to frontend format
+      const mappedResponse: AuthResponse = {
+        token: response.data.token,
+        user: {
+          id: response.data.userId,
+          email: response.data.userEmail,
+          username: response.data.userName,
+          firstName: response.data.firstName || data.firstName,
+          lastName: response.data.lastName || data.lastName
+        }
+      };
+      
+      console.log('Mapped registration response:', mappedResponse); // Debug log
+      
       logger.performanceEnd(perfId, 'register');
-      logger.authSuccess('register', response.data.user);
-      return response.data;
+      logger.authSuccess('register', mappedResponse.user);
+      return mappedResponse;
     } catch (error: any) {
       logger.performanceEnd(perfId, 'register');
+      
+      // Log detailed error information
+      logger.error('Registration failed with detailed error', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        errors: error.response?.data?.errors,
+        message: error.message,
+        requestData: {
+          email: data.email,
+          firstName: data.firstName,
+          lastName: data.lastName,
+          username: data.username
+        }
+      }, 'AUTH', 'REGISTER_DETAILED_ERROR');
+      
       logger.authError('register', error);
       throw error;
     }

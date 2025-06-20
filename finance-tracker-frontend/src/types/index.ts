@@ -1,10 +1,11 @@
 // src/types/index.ts
 export interface User {
-    id: string;
-    email: string;
-    firstName: string;
-    lastName: string;
-  }
+  id: string;
+  email: string;
+  username: string;  // ← Bu satır var mı?
+  firstName: string;
+  lastName: string;
+}
   
   export interface Transaction {
     id: string;
@@ -30,10 +31,11 @@ export interface User {
   }
   
   export interface RegisterRequest {
-    email: string;
-    password: string;
+    username: string;
     firstName: string;
     lastName: string;
+    email: string;
+    password: string;
   }
   
   export interface AuthResponse {
@@ -55,3 +57,4 @@ export interface User {
     balance: number;
     transactionCount: number;
   }
+  
