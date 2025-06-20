@@ -31,20 +31,55 @@ namespace FinanceTracker.API.Controllers
             bool userNameExist = await _userManager.Users.AnyAsync(p => p.UserName == model.Username);
             if (userNameExist)
                 return BadRequest(new { Message = "Kullanıcı Adı Daha Önce Kayıt Edildi." });
+            
             bool emailExist = await _userManager.Users.AnyAsync(p => p.Email == model.Email);
             if (emailExist)
                 return BadRequest(new { Message = "Email Daha Önce Kayıt Edildi." });
+            
             var user = new ApplicationUser
             {
                 UserName = model.Username,
-                Email = model.Email
+                Email = model.Email,
+                FirstName = model.FirstName ?? "",
+                LastName = model.LastName ?? ""
             };   
+            
             var result = await _userManager.CreateAsync(user, model.Password);
 
             if (!result.Succeeded)
                 return BadRequest(result.Errors);
 
-            return Ok(new { Message = "User registered successfully" });
+            // Generate JWT token for the newly registered user
+            var authClaims = new List<Claim>
+            {
+                new Claim(ClaimTypes.Name, user.UserName),
+                new Claim(ClaimTypes.Email, user.Email),
+                new Claim(ClaimTypes.NameIdentifier, user.Id),
+                new Claim(ClaimTypes.GivenName, user.FirstName),
+                new Claim(ClaimTypes.Surname, user.LastName),
+                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            };
+
+            var authSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]));
+
+            var token = new JwtSecurityToken(
+                issuer: _configuration["JWT:ValidIssuer"],
+                audience: _configuration["JWT:ValidAudience"],
+                expires: DateTime.Now.AddHours(3),
+                claims: authClaims,
+                signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
+            );
+
+            return Ok(new
+            {
+                Token = new JwtSecurityTokenHandler().WriteToken(token),
+                Expiration = token.ValidTo,
+                UserId = user.Id,
+                UserEmail = user.Email,
+                UserName = user.UserName,
+                FirstName = user.FirstName,
+                LastName = user.LastName
+            });
         }
 
         [HttpPost("login")]
@@ -57,68 +92,39 @@ namespace FinanceTracker.API.Controllers
             if (user == null || !await _userManager.CheckPasswordAsync(user, model.Password))
                 return Unauthorized(new { Message = "Invalid credentials" });
 
-            // Create claims for the JWT token with CORRECT claim types
+            // Create claims for the JWT token
             var authClaims = new List<Claim>
             {
-                // Add the user ID as NameIdentifier claim (this is what UserManager.GetUserAsync looks for)
+                new Claim(ClaimTypes.Name, user.UserName),
+                new Claim(ClaimTypes.Email, user.Email),
                 new Claim(ClaimTypes.NameIdentifier, user.Id),
-                new Claim(ClaimTypes.Name, user.UserName ?? ""),
-                new Claim(ClaimTypes.Email, user.Email ?? ""),
-                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-                new Claim(JwtRegisteredClaimNames.Sub, user.Id), // Subject claim
-                new Claim("userId", user.Id) // Custom claim for easier access
+                new Claim(ClaimTypes.GivenName, user.FirstName ?? ""),
+                new Claim(ClaimTypes.Surname, user.LastName ?? ""),
+                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
             };
 
-            // Debug: Log the claims being added
-            Console.WriteLine("=== Creating JWT with claims ===");
-            foreach (var claim in authClaims)
-            {
-                Console.WriteLine($"{claim.Type}: {claim.Value}");
-            }
-
             // Generate the signing key
-            var authSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]!));
+            var authSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]));
 
             // Create the JWT token
             var token = new JwtSecurityToken(
                 issuer: _configuration["JWT:ValidIssuer"],
                 audience: _configuration["JWT:ValidAudience"],
-                expires: DateTime.Now.AddHours(3), // Token expiration time
+                expires: DateTime.Now.AddHours(3),
                 claims: authClaims,
                 signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
             );
 
-            var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
-
-            // Debug: Log token creation
-            Console.WriteLine($"✅ JWT Token created for user: {user.Email} (ID: {user.Id})");
-            Console.WriteLine($"Token preview: {tokenString.Substring(0, Math.Min(50, tokenString.Length))}...");
-
-            // Return the token and expiration time
+            // Return the token with user information
             return Ok(new
             {
-                Token = tokenString,
+                Token = new JwtSecurityTokenHandler().WriteToken(token),
                 Expiration = token.ValidTo,
                 UserId = user.Id,
                 UserEmail = user.Email,
-                UserName = user.UserName
-            });
-        }
-
-        // Add a test endpoint to verify token creation
-        [HttpPost("test-token")]
-        public async Task<IActionResult> TestToken([FromBody] LoginModel model)
-        {
-            var user = await _userManager.FindByEmailAsync(model.Email);
-            if (user == null)
-                return NotFound(new { Message = "User not found" });
-
-            return Ok(new
-            {
-                UserId = user.Id,
-                UserEmail = user.Email,
                 UserName = user.UserName,
-                Message = "User found successfully"
+                FirstName = user.FirstName ?? "",
+                LastName = user.LastName ?? ""
             });
         }
     }
