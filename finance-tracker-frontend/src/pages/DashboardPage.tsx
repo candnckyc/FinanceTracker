@@ -31,6 +31,9 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import apiService from '../services/api';
 
+// Components
+import AddTransactionDialog from '../components/AddTransactionDialog';
+
 // Types
 import { Transaction, DashboardStats } from '../types';
 
@@ -197,7 +200,7 @@ const DashboardPage: React.FC<DashboardPageProps> = () => {
           
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <Chip
-              label={`${user?.firstName} ${user?.lastName}`}
+              label={`${user?.firstName || ''} ${user?.lastName || ''}`.trim() || user?.username || 'User'}
               variant="outlined"
               sx={{ color: 'white', borderColor: 'white' }}
             />
@@ -211,7 +214,7 @@ const DashboardPage: React.FC<DashboardPageProps> = () => {
               color="inherit"
             >
               <Avatar sx={{ width: 32, height: 32 }}>
-                {user?.firstName?.[0]}{user?.lastName?.[0]}
+                {user?.firstName?.[0]?.toUpperCase()}{user?.lastName?.[0]?.toUpperCase()}
               </Avatar>
             </IconButton>
           </Box>
@@ -278,7 +281,7 @@ const DashboardPage: React.FC<DashboardPageProps> = () => {
               <Typography 
                 variant="h4" 
                 fontWeight="bold"
-                sx={{ color: getBalanceColor(stats.balance) }}
+                sx={{ color: 'white' }}
               >
                 {formatCurrency(stats.balance)}
               </Typography>
@@ -414,12 +417,12 @@ const DashboardPage: React.FC<DashboardPageProps> = () => {
         <AddIcon />
       </Fab>
 
-      {/* Add Transaction Dialog - We'll create this component next */}
-      {/* <AddTransactionDialog
+      {/* Add Transaction Dialog */}
+      <AddTransactionDialog
         open={addDialogOpen}
         onClose={() => setAddDialogOpen(false)}
         onTransactionAdded={handleTransactionAdded}
-      /> */}
+      />
     </Box>
   );
 };
