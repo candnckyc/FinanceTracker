@@ -31,7 +31,9 @@ import {
   IconButton,
   Stack,
   Collapse,
-  InputAdornment
+  InputAdornment,
+  Fade,
+  Divider
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -44,8 +46,29 @@ import {
   Delete as DeleteIcon,
   FilterList as FilterIcon,
   Clear as ClearIcon,
-  Search as SearchIcon
+  Search as SearchIcon,
+  ShowChart as TrendIcon,
+  PieChart as PieChartIcon,
+  BarChart as BarChartIcon,
+  Timeline as TimelineIcon
 } from '@mui/icons-material';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  AreaChart,
+  Area
+} from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
 import apiService from '../services/api';
 import { Transaction, TransactionCreateDto } from '../types';
@@ -57,6 +80,8 @@ interface DashboardStats {
   balance: number;
   transactionCount: number;
 }
+
+type AnalyticsView = 'trends' | 'categories' | 'monthly' | 'balance' | null;
 
 const categories = [
   'Food & Dining',
@@ -73,6 +98,12 @@ const categories = [
   'Freelance',
   'Gift',
   'Other'
+];
+
+const CHART_COLORS = [
+  '#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe', '#00f2fe',
+  '#43e97b', '#38f9d7', '#fa709a', '#fee140', '#a8edea', '#fed6e3',
+  '#d299c2', '#fef9d7', '#667292', '#b8c6db'
 ];
 
 const DashboardPage: React.FC = () => {
@@ -94,6 +125,11 @@ const DashboardPage: React.FC = () => {
   const [searchText, setSearchText] = useState('');
   const [filterType, setFilterType] = useState<'All' | 'Income' | 'Expense'>('All');
   const [filterCategory, setFilterCategory] = useState('');
+
+  // Analytics state
+  const [activeChart, setActiveChart] = useState<AnalyticsView>(null);
+  const [analyticsDateFrom, setAnalyticsDateFrom] = useState('');
+  const [analyticsDateTo, setAnalyticsDateTo] = useState('');
 
   // Form state
   const [formData, setFormData] = useState<TransactionCreateDto>({
@@ -188,6 +224,98 @@ const DashboardPage: React.FC = () => {
     };
   }, [filteredTransactions]);
 
+  // Prepare chart data
+  const chartData = useMemo(() => {
+    // Filter transactions for analytics based on date range
+    let analyticsTransactions = transactions;
+    
+    if (analyticsDateFrom) {
+      analyticsTransactions = analyticsTransactions.filter(t => 
+        new Date(t.date) >= new Date(analyticsDateFrom)
+      );
+    }
+    
+    if (analyticsDateTo) {
+      analyticsTransactions = analyticsTransactions.filter(t => 
+        new Date(t.date) <= new Date(analyticsDateTo)
+      );
+    }
+
+    // Trends data - group by month
+    const trendsData = analyticsTransactions.reduce((acc: any[], transaction) => {
+      const month = new Date(transaction.date).toLocaleDateString('en-US', { 
+        month: 'short', 
+        year: 'numeric' 
+      });
+      
+      const existing = acc.find(item => item.month === month);
+      if (existing) {
+        if (transaction.type === 'Income') {
+          existing.income += transaction.amount;
+        } else {
+          existing.expenses += transaction.amount;
+        }
+        existing.balance = existing.income - existing.expenses;
+      } else {
+        acc.push({
+          month,
+          income: transaction.type === 'Income' ? transaction.amount : 0,
+          expenses: transaction.type === 'Expense' ? transaction.amount : 0,
+          balance: transaction.type === 'Income' ? transaction.amount : -transaction.amount
+        });
+      }
+      return acc;
+    }, []).sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime());
+
+    // Categories data - group expenses by category
+    const categoryData = analyticsTransactions
+      .filter(t => t.type === 'Expense')
+      .reduce((acc: any[], transaction) => {
+        const existing = acc.find(item => item.name === transaction.category);
+        if (existing) {
+          existing.value += transaction.amount;
+        } else {
+          acc.push({
+            name: transaction.category,
+            value: transaction.amount
+          });
+        }
+        return acc;
+      }, [])
+      .sort((a, b) => b.value - a.value);
+
+    // Monthly overview - simplified monthly data
+    const monthlyData = trendsData.map(item => ({
+      month: item.month,
+      income: item.income,
+      expenses: item.expenses
+    }));
+
+    // Balance history - cumulative balance over time
+    const balanceData = analyticsTransactions
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      .reduce((acc: any[], transaction, index) => {
+        const prevBalance = index === 0 ? 0 : acc[acc.length - 1]?.balance || 0;
+        const change = transaction.type === 'Income' ? transaction.amount : -transaction.amount;
+        acc.push({
+          date: new Date(transaction.date).toLocaleDateString('en-US', { 
+            month: 'short', 
+            day: 'numeric' 
+          }),
+          balance: prevBalance + change
+        });
+        return acc;
+      }, []);
+
+    return {
+      trends: trendsData,
+      categories: categoryData,
+      monthly: monthlyData,
+      balance: balanceData,
+      filteredTransactions: analyticsTransactions
+    };
+  }, [transactions, analyticsDateFrom, analyticsDateTo]);
+
   const handleLogout = () => {
     logger.userAction('logout_button_click', 'DashboardPage');
     logout();
@@ -267,7 +395,137 @@ const DashboardPage: React.FC = () => {
     setFilterCategory('');
   };
 
+  const handleChartSelect = (chartType: AnalyticsView) => {
+    logger.userAction('analytics_chart_select', 'DashboardPage', { chartType });
+    setActiveChart(activeChart === chartType ? null : chartType);
+  };
+
   const hasActiveFilters = searchText || filterType !== 'All' || filterCategory;
+
+  const renderChart = () => {
+    if (!activeChart || chartData.trends.length === 0) return null;
+
+    switch (activeChart) {
+      case 'trends':
+        return (
+          <ResponsiveContainer width="100%" height={400}>
+            <LineChart data={chartData.trends}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+              <XAxis dataKey="month" stroke="#666" />
+              <YAxis stroke="#666" />
+              <Tooltip 
+                contentStyle={{ 
+                  backgroundColor: 'white', 
+                  border: '1px solid #e0e0e0',
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                }}
+                formatter={(value: number) => [`$${value.toFixed(2)}`, '']}
+              />
+              <Legend />
+              <Line 
+                type="monotone" 
+                dataKey="income" 
+                stroke="#43e97b" 
+                strokeWidth={3}
+                name="Income"
+                dot={{ fill: '#43e97b', r: 6 }}
+              />
+              <Line 
+                type="monotone" 
+                dataKey="expenses" 
+                stroke="#fa709a" 
+                strokeWidth={3}
+                name="Expenses"
+                dot={{ fill: '#fa709a', r: 6 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        );
+
+      case 'categories':
+        return (
+          <ResponsiveContainer width="100%" height={400}>
+            <PieChart>
+              <Pie
+                data={chartData.categories}
+                cx="50%"
+                cy="50%"
+                labelLine={false}
+                label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                outerRadius={120}
+                fill="#8884d8"
+                dataKey="value"
+              >
+                {chartData.categories.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip formatter={(value: number) => [`$${value.toFixed(2)}`, 'Amount']} />
+            </PieChart>
+          </ResponsiveContainer>
+        );
+
+      case 'monthly':
+        return (
+          <ResponsiveContainer width="100%" height={400}>
+            <BarChart data={chartData.monthly}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+              <XAxis dataKey="month" stroke="#666" />
+              <YAxis stroke="#666" />
+              <Tooltip 
+                contentStyle={{ 
+                  backgroundColor: 'white', 
+                  border: '1px solid #e0e0e0',
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                }}
+                formatter={(value: number) => [`$${value.toFixed(2)}`, '']}
+              />
+              <Legend />
+              <Bar dataKey="income" fill="#43e97b" name="Income" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="expenses" fill="#fa709a" name="Expenses" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        );
+
+      case 'balance':
+        return (
+          <ResponsiveContainer width="100%" height={400}>
+            <AreaChart data={chartData.balance}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+              <XAxis dataKey="date" stroke="#666" />
+              <YAxis stroke="#666" />
+              <Tooltip 
+                contentStyle={{ 
+                  backgroundColor: 'white', 
+                  border: '1px solid #e0e0e0',
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                }}
+                formatter={(value: number) => [`$${value.toFixed(2)}`, 'Balance']}
+              />
+              <Area 
+                type="monotone" 
+                dataKey="balance" 
+                stroke="#667eea" 
+                strokeWidth={3}
+                fill="url(#balanceGradient)" 
+              />
+              <defs>
+                <linearGradient id="balanceGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#667eea" stopOpacity={0.8}/>
+                  <stop offset="95%" stopColor="#764ba2" stopOpacity={0.2}/>
+                </linearGradient>
+              </defs>
+            </AreaChart>
+          </ResponsiveContainer>
+        );
+
+      default:
+        return null;
+    }
+  };
 
   if (loading) {
     return (
@@ -377,7 +635,7 @@ const DashboardPage: React.FC = () => {
         </Box>
 
         {/* Transactions Section */}
-        <Paper sx={{ p: 3, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(10px)' }}>
+        <Paper sx={{ p: 3, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(10px)', mb: 4 }}>
           {/* Header with Add Transaction and Filters */}
           <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
             <Typography variant="h5" component="h2">
@@ -559,6 +817,184 @@ const DashboardPage: React.FC = () => {
               </TableBody>
             </Table>
           </TableContainer>
+        </Paper>
+
+        {/* Analytics Section */}
+        <Paper sx={{ p: 3, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(10px)' }}>
+          <Typography variant="h5" component="h2" mb={3}>
+            Analytics
+          </Typography>
+
+
+          {/* Analytics Bar */}
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3 }}>
+            <Button
+              variant={activeChart === 'trends' ? 'contained' : 'outlined'}
+              startIcon={<TrendIcon />}
+              onClick={() => handleChartSelect('trends')}
+              sx={{ 
+                borderRadius: 3,
+                textTransform: 'none',
+                ...(activeChart === 'trends' && {
+                  background: 'linear-gradient(45deg, #667eea 30%, #764ba2 90%)'
+                })
+              }}
+            >
+              Income vs Expense Trends
+            </Button>
+
+            <Button
+              variant={activeChart === 'categories' ? 'contained' : 'outlined'}
+              startIcon={<PieChartIcon />}
+              onClick={() => handleChartSelect('categories')}
+              sx={{ 
+                borderRadius: 3,
+                textTransform: 'none',
+                ...(activeChart === 'categories' && {
+                  background: 'linear-gradient(45deg, #43e97b 30%, #38f9d7 90%)'
+                })
+              }}
+            >
+              Category Breakdown
+            </Button>
+
+            <Button
+              variant={activeChart === 'monthly' ? 'contained' : 'outlined'}
+              startIcon={<BarChartIcon />}
+              onClick={() => handleChartSelect('monthly')}
+              sx={{ 
+                borderRadius: 3,
+                textTransform: 'none',
+                ...(activeChart === 'monthly' && {
+                  background: 'linear-gradient(45deg, #fa709a 30%, #fee140 90%)'
+                })
+              }}
+            >
+              Monthly Overview
+            </Button>
+
+            <Button
+              variant={activeChart === 'balance' ? 'contained' : 'outlined'}
+              startIcon={<TimelineIcon />}
+              onClick={() => handleChartSelect('balance')}
+              sx={{ 
+                borderRadius: 3,
+                textTransform: 'none',
+                ...(activeChart === 'balance' && {
+                  background: 'linear-gradient(45deg, #4facfe 30%, #00f2fe 90%)'
+                })
+              }}
+            >
+              Balance History
+            </Button>
+          </Box>
+
+           {/* Analytics Date Filter */}
+           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3, p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+            <Typography variant="body2" sx={{ alignSelf: 'center', minWidth: 'auto', fontWeight: 500 }}>
+              📅 Date Range:
+            </Typography>
+            <TextField
+              label="From Date"
+              type="date"
+              size="small"
+              value={analyticsDateFrom}
+              onChange={(e) => setAnalyticsDateFrom(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              sx={{ minWidth: '150px' }}
+            />
+            <TextField
+              label="To Date"
+              type="date"
+              size="small"
+              value={analyticsDateTo}
+              onChange={(e) => setAnalyticsDateTo(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              sx={{ minWidth: '150px' }}
+            />
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => {
+                setAnalyticsDateFrom('');
+                setAnalyticsDateTo('');
+                logger.userAction('clear_analytics_date_filter', 'DashboardPage');
+              }}
+              disabled={!analyticsDateFrom && !analyticsDateTo}
+              sx={{ textTransform: 'none' }}
+            >
+              Clear Dates
+            </Button>
+            {(analyticsDateFrom || analyticsDateTo) && (
+              <Chip
+                label={`${chartData.filteredTransactions.length} transactions in range`}
+                size="small"
+                color="info"
+                variant="outlined"
+              />
+            )}
+          </Box>
+
+          {/* Chart Display Area */}
+          <Fade in={!!activeChart} timeout={500}>
+            <Box>
+              {activeChart && (
+                <Paper 
+                  sx={{ 
+                    p: 3, 
+                    mt: 2, 
+                    bgcolor: 'white',
+                    borderRadius: 3,
+                    boxShadow: '0 8px 32px rgba(0,0,0,0.1)'
+                  }}
+                >
+                  <Typography variant="h6" mb={3} color="text.primary">
+                    {activeChart === 'trends' && '📈 Income vs Expense Trends'}
+                    {activeChart === 'categories' && '🍰 Category Spending Breakdown'}
+                    {activeChart === 'monthly' && '📊 Monthly Overview'}
+                    {activeChart === 'balance' && '💰 Balance History'}
+                  </Typography>
+                  
+                  {chartData.trends.length === 0 ? (
+                    <Box sx={{ textAlign: 'center', py: 8 }}>
+                      <Typography variant="h6" color="text.secondary" gutterBottom>
+                        {(analyticsDateFrom || analyticsDateTo) ? 'No Data in Selected Date Range' : 'No Data Available'}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {(analyticsDateFrom || analyticsDateTo) 
+                          ? 'Try adjusting the date range or add transactions for this period'
+                          : 'Add some transactions to see your analytics'
+                        }
+                      </Typography>
+                    </Box>
+                  ) : (
+                    renderChart()
+                  )}
+                </Paper>
+              )}
+            </Box>
+          </Fade>
+
+          {/* Empty State */}
+          {!activeChart && (
+            <Paper 
+              sx={{ 
+                p: 6, 
+                textAlign: 'center', 
+                bgcolor: 'grey.50',
+                borderRadius: 3,
+                border: '2px dashed',
+                borderColor: 'grey.300'
+              }}
+            >
+              <Typography variant="h6" color="text.secondary" gutterBottom>
+                📊 Choose an Analytics View
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Select a chart type above to visualize your financial data
+              </Typography>
+            </Paper>
+          )}
         </Paper>
       </Container>
 
