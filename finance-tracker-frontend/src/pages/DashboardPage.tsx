@@ -220,7 +220,7 @@ const DashboardPage: React.FC = () => {
   };
 
   const handleDeleteTransaction = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this transaction?')) return;
+    if (!window.confirm('Are you sure you want to delete this transaction?')) return;
     
     try {
       logger.userAction('delete_transaction_confirm', 'DashboardPage', { transactionId: id });
