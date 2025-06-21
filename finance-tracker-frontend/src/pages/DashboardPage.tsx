@@ -76,6 +76,7 @@ import logger from '../utils/logger';
 import { useNavigate } from 'react-router-dom';
 import { Settings as SettingsIcon } from '@mui/icons-material';
 
+
 interface DashboardStats {
   totalIncome: number;
   totalExpenses: number;
@@ -1044,10 +1045,23 @@ const DashboardPage: React.FC = () => {
               label="Amount"
               type="number"
               value={formData.amount}
-              onChange={(e) => setFormData(prev => ({ ...prev, amount: parseFloat(e.target.value) || 0 }))}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value) || 0;
+                // Prevent amounts larger than $1 million
+                if (value <= 1000000) {
+                  setFormData(prev => ({ ...prev, amount: value }));
+                }
+              }}
+              inputProps={{
+                min: 0,
+                max: 1000000,
+                step: 0.01
+              }}
+              helperText="Maximum amount: $1,000,000"
               InputProps={{
                 startAdornment: <InputAdornment position="start">$</InputAdornment>,
               }}
+              required
             />
 
             <FormControl fullWidth>
