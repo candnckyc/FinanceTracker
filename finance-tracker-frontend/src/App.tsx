@@ -14,6 +14,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
+import SettingsPage from './pages/SettingsPage';
 
 // Utils
 import logger from './utils/logger';
@@ -122,6 +123,7 @@ const App: React.FC = () => {
               {/* Public Routes */}
               <Route path="/login" element={<LoginPage />} />
               <Route path="/register" element={<RegisterPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
               
               {/* Protected Routes */}
               <Route 
@@ -145,5 +147,6 @@ const App: React.FC = () => {
     </ThemeProvider>
   );
 };
+
 
 export default App;

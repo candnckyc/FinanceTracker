@@ -73,6 +73,8 @@ import { useAuth } from '../contexts/AuthContext';
 import apiService from '../services/api';
 import { Transaction, TransactionCreateDto } from '../types';
 import logger from '../utils/logger';
+import { useNavigate } from 'react-router-dom';
+import { Settings as SettingsIcon } from '@mui/icons-material';
 
 interface DashboardStats {
   totalIncome: number;
@@ -108,6 +110,7 @@ const CHART_COLORS = [
 
 const DashboardPage: React.FC = () => {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [stats, setStats] = useState<DashboardStats>({
     totalIncome: 0,
@@ -551,11 +554,15 @@ const DashboardPage: React.FC = () => {
           <Avatar sx={{ width: 32, height: 32, mr: 2 }}>
             {user?.firstName?.[0]?.toUpperCase()}{user?.lastName?.[0]?.toUpperCase()}
           </Avatar>
-          <Button color="inherit" onClick={handleLogout} startIcon={<LogoutIcon />}>
-            Logout
-          </Button>
+          <IconButton color="inherit" onClick={() => navigate('/settings')} sx={{ mr: 1 }}>
+  <SettingsIcon />
+</IconButton>
+<Button color="inherit" onClick={handleLogout} startIcon={<LogoutIcon />}>
+  Logout
+</Button>
         </Toolbar>
       </AppBar>
+      
 
       <Container maxWidth="lg" sx={{ mt: 4, pb: 4 }}>
         {error && (
